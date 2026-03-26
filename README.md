@@ -1,6 +1,6 @@
 # 🧬 EVO Pump.fun Alert Bot
 
-**Automatic pump.fun trending alerts for Telegram channel**
+**Real-time pump.fun monitoring via WebSocket for Telegram alerts**
 
 ---
 
@@ -8,8 +8,8 @@
 
 ### 1. Prerequisites
 - GitHub account (free)
-- Render account (free)
-- Bot token & Channel ID (have both already)
+- Render/Railway/Replit account (free)
+- Bot token & Channel ID (already configured)
 
 ### 2. Create GitHub Repository
 
@@ -27,7 +27,7 @@ Upload these 3 files to your repository:
 
 ```
 evo-alert-bot/
-├── evo_alert_bot.py      # Main bot script
+├── evo_alert_bot.py      # Main bot script (WebSocket)
 ├── requirements.txt      # Dependencies
 └── README.md            # This file
 ```
@@ -36,9 +36,10 @@ evo-alert-bot/
 
 ---
 
-### 4. Deploy to Render
+### 4. Deploy to Render (or Railway/Replit)
 
-1. Sign up: https://render.com/ (use GitHub login - easiest)
+#### Render (Recommended - No CC needed after signup)
+1. Sign up: https://render.com/ (use GitHub login)
 2. Dashboard → **New → Web Service**
 3. **Connect Repository:**
    - Select: `evo-alert-bot`
@@ -61,44 +62,78 @@ evo-alert-bot/
 
 ---
 
+#### Railway (Alternative - No CC)
+1. Sign up: https://railway.app/ (with GitHub)
+2. New Project → Deploy from GitHub → select `evo-alert-bot`
+3. Settings:
+   - Runtime: Python
+   - Start command: `python evo_alert_bot.py`
+   - Build command: `pip install -r requirements.txt`
+4. Add environment variables (same as above)
+5. Deploy! (free tier: $5/month - more than enough)
+
+---
+
+#### Replit (Easiest - But needs keepalive)
+1. Sign up: https://replit.com/ (with GitHub/Google)
+2. + Create Repl → Python → Name: `evo-alert-bot`
+3. Upload 3 files (drag-drop)
+4. Lock icon (Secrets) → Add both env vars
+5. Click Run ▶️
+6. **IMPORTANT:** Set up UptimeRobot to ping every 5 min (Replit sleeps)
+
+---
+
 ### 5. Verify Deployment
 
-1. Check Render logs (should show "EVO ALERT BOT STARTED")
+1. Check hosting logs (should show "EVO ALERT BOT CONNECTED")
 2. Check your Telegram channel **@EvoAlerts**
 3. Should see startup message:
    ```
-   🧬 EVO ALERT BOT STARTED 🧬
-   Bot is now monitoring pump.fun...
+   🧬 EVO ALERT BOT CONNECTED 🧬
+   Listening to pump.fun real-time stream...
    ```
 4. If you see it → **SUCCESS! ✅**
 
 ---
 
-## 🔧 Configuration
+## 🔧 How It Works
 
-All thresholds already set to reasonable defaults:
+### WebSocket Connection (Real-Time!)
+```
+pumpportal.fun/data-api/real-time (wss://)
+```
+- **Instant push** - no polling delay
+- **Event-driven** - listens for: `new_token`, `token_update`, `graduation`
+- **Efficient** - zero wasted requests
+- **Reliable** - auto-reconnect on disconnect
 
-| Setting | Current Value | Description |
-|---------|---------------|-------------|
-| MIN_VOLUME_SOL | 10 | Min volume (SOL) in 5min |
-| MIN_HOLDERS | 50 | Min holder count |
-| MAX_AGE_MINUTES | 30 | Max token age (minutes) |
-| MIN_LIQUIDITY_USD | 1000 | Min liquidity (USD) |
-| VOLUME_SPIKE_PERCENT | 200 | Volume spike threshold |
-| CHECK_INTERVAL_SECONDS | 30 | How often to check |
-| MAX_ALERTS_PER_HOUR | 10 | Anti-spam limit |
+### Alert Types
+
+| Alert | Trigger | Description |
+|-------|---------|-------------|
+| **🧬 Trending** | New token with volume ≥10 SOL | Fresh token entering trending |
+| **🚨 Volume Spike** | Volume increase ≥200% in 5min | Sudden buying pressure |
+| **🚀 Fast Mover** | Price pump ≥100% in 5min | Token pumping hard |
+| **🎓 Graduation** | Bonding curve ≥90% | About to launch to Raydium |
+| **📊 Hourly Recap** | Every hour | Top trending summary |
 
 ---
 
-## 📋 Alert Types
+## 📋 Configuration
 
-The bot sends 4 types of alerts:
+All thresholds in `evo_alert_bot.py`:
 
-1. **🧬 Trending Alert** - New token entering pump.fun trending
-2. **🚨 Volume Spike** - Sudden volume increase
-3. **🚀 Fast Mover** - Token pumping >100% in 5min
-4. **🎓 Graduation Alert** - Token nearing bonding curve completion
-5. **📊 Hourly Recap** - Summary of trending tokens
+```python
+MIN_VOLUME_SOL = 10          # Minimum volume (SOL) in 5 minutes
+MIN_HOLDERS = 50             # Minimum holder count
+MAX_AGE_MINUTES = 30         # Maximum token age (ignore old tokens)
+MIN_LIQUIDITY_USD = 1000     # Minimum liquidity (USD)
+VOLUME_SPIKE_PERCENT = 200   # Volume spike threshold (%)
+MAX_ALERTS_PER_HOUR = 10     # Anti-spam limit
+```
+
+**Adjust as needed, then redeploy!**
 
 ---
 
@@ -106,33 +141,35 @@ The bot sends 4 types of alerts:
 
 1. Edit `evo_alert_bot.py` on GitHub
 2. Commit changes
-3. Render **auto-deploys** within 1-2 minutes
-4. Check Render logs to confirm update
+3. Hosting **auto-deploys** within 1-2 minutes
+4. Check logs to confirm update
 
 ---
 
 ## 🆘 Troubleshooting
 
 ### Bot not sending alerts?
-- ✅ Check Render logs for errors
+- ✅ Check hosting logs for errors (WebSocket connection?)
 - ✅ Verify bot is **admin** in your Telegram channel
 - ✅ Check Channel ID: must include `-100` prefix
-- ✅ Wait for first trending token to appear (may take minutes)
+- ✅ Wait for first pump.fun activity (may take minutes)
+- ✅ Lower `MIN_VOLUME_SOL` to 5 for testing
 
-### Rendering errors?
-- ✅ Python version: must be Python 3.8+
-- ✅ Requirements.txt format correct
-- ✅ Environment variables set correctly
+### "ModuleNotFoundError: websockets"
+- ✅ Make sure `requirements.txt` has `websockets==12.0`
+- ✅ Build command: `pip install -r requirements.txt`
+
+### WebSocket disconnect?
+- ✅ Normal - bot auto-reconnects
+- ✅ Check firewall/network (port 443 outbound)
 
 ### Too many/too few alerts?
-- Adjust thresholds in `evo_alert_bot.py` (see Configuration section above)
+- Adjust thresholds in `evo_alert_bot.py`
 - Redeploy after changes
 
 ---
 
 ## 🎯 Testing Locally (Optional)
-
-If you want to test before deploying:
 
 ```bash
 # 1. Install dependencies
@@ -149,7 +186,7 @@ python evo_alert_bot.py
 
 ## 📊 Monitoring
 
-- **Render Dashboard:** View logs, restart service, check uptime
+- **Hosting Dashboard:** View logs, restart service, check uptime
 - **Telegram Channel:** Real-time alerts
 - **GitHub:** Code version history
 
@@ -164,29 +201,29 @@ All alerts include EVO branding:
 
 ---
 
-## 💡 Next Steps
+## 💡 Technical Details
 
-After bot is running:
-
-1. ✅ Verify alerts are working
-2. ✅ Test different alert types
-3. ✅ Share channel with EVO holders
-4. ✅ Plan Stage 2: Add smart money tracking
-5. ✅ Plan Stage 3: Multi-chain support
+- **Language:** Python 3.8+
+- **Libraries:**
+  - `python-telegram-bot==20.7` - Telegram API
+  - `aiohttp==3.9.1` - REST fallback for token details
+  - `websockets==12.0` - WebSocket connection to pump.fun
+- **Connection:** wss://pumpportal.fun/data-api/real-time
+- **Memory:** Lightweight (~50MB RAM)
 
 ---
 
 ## 📞 Support
 
-- **Render Docs:** https://render.com/docs
+- **pump.fun API Docs:** https://pumpportal.fun/api
 - **Python Telegram Bot:** https://github.com/python-telegram-bot
-- **pump.fun API:** https://pumpportal.fun/api
+- **WebSocket Guide:** https://websockets.readthedocs.io
 
 ---
 
-**Created:** March 26, 2026  
-**For:** EVO Agents  
-**Status:** ✅ READY TO DEPLOY
+**Created:** March 26, 2026
+**For:** EVO Agents
+**Status:** ✅ READY TO DEPLOY (WebSocket Real-Time)
 
 ---
 
@@ -194,14 +231,17 @@ After bot is running:
 
 Before deploying, ensure:
 
-- [x] GitHub repo created
-- [x] Files uploaded (3 files)
-- [x] Render account created
+- [x] GitHub repo created: `evo-alert-bot` (Public)
+- [x] 3 files uploaded (evo_alert_bot.py, requirements.txt, README.md)
 - [x] Environment variables set (both required)
 - [x] Bot added as admin to @EvoAlerts
 - [x] Bot token valid
 - [x] Channel ID correct (with -100 prefix)
+- [x] requirements.txt includes `websockets==12.0`
+- [x] Hosting platform selected (Render/Railway/Replit)
 
 ---
 
 **Now deploy!** 🚀
+
+Real-time alerts incoming soon...
