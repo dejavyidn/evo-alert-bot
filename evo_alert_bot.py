@@ -1,4 +1,5 @@
 import asyncio
+import websockets
 import aiohttp
 import json
 from datetime import datetime, timedelta
@@ -20,7 +21,6 @@ MIN_LIQUIDITY_USD = 1000
 VOLUME_SPIKE_PERCENT = 200
 
 # Monitoring Settings
-CHECK_INTERVAL_SECONDS = 30
 MAX_ALERTS_PER_HOUR = 10
 
 # Logging
@@ -30,7 +30,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-PUMP_FUN_API = "https://api.pump.fun"
+# Pump.fun WebSocket URL (REAL-TIME!)
+PUMP_FUN_WS = "wss://pumpportal.fun/data-api/real-time"
+
+# REST fallback (for token details)
+PUMP_FUN_REST = "https://pumpportal.fun/data-api"
 
 class AlertTracker:
     def __init__(self):
@@ -73,44 +77,39 @@ async def send_trending_alert(token_data: dict):
     message = f"""
 🧬 <b>TRENDING ALERT</b> 🧬
 
-New token entering pump.fun trending!
+New token trending on pump.fun!
 
 🪙 <b>{token_data.get('name', 'Unknown')}</b> ({token_data.get('symbol', 'UNKNOWN')})
 🔗 <code>{token_data.get('mint', 'N/A')}</code>
-📈 MC: ${token_data.get('market_cap_usd', 0):,.2f}
-💰 Volume: {token_data.get('volume_sol', 0):.2f} SOL (5min)
+📈 MC: ${token_data.get('market_cap', 0):,.2f}
+💰 Volume 5m: {token_data.get('volume_sol_5m', 0):.2f} SOL
 💧 Liquidity: ${token_data.get('liquidity_usd', 0):,.2f}
 🔥 Holders: {token_data.get('holder_count', 0):,}
 ⏰ Age: {token_data.get('age_minutes', 0)} minutes
-📊 Trending Rank: #{token_data.get('trending_rank', 'N/A')}
+📊 Rank: #{token_data.get('trending_rank', 'N/A')}
 
 🔗 <a href="https://pump.fun/{token_data.get('mint', '')}">View on pump.fun</a>
-📈 <a href="https://dexscreener.com/solana/{token_data.get('mint', '')}">View on Dexscreener</a>
+📈 <a href="https://dexscreener.com/solana/{token_data.get('mint', '')}">Chart</a>
 
-Early opportunity? DYOR! 👀
+Early alpha! DYOR! 👀
 
-<i>"Evolve or Die"</i> 🧬
+"Evolve or Die" 🧬
 - EVO Agents
 """
     await send_telegram_message(message)
 
 async def send_volume_spike_alert(token_data: dict):
     message = f"""
-🚨 <b>VOLUME SPIKE DETECTED</b> 🚨
-
-Token pumping on pump.fun!
+🚨 <b>VOLUME SPIKE</b> 🚨
 
 🪙 <b>${token_data.get('symbol', 'UNKNOWN')}</b>
-📈 +{token_data.get('volume_change_percent', 0)}% volume (5min)
-💰 Volume: {token_data.get('volume_sol', 0):.2f} SOL
-📊 Buys: {token_data.get('buy_count', 0)} | Sells: {token_data.get('sell_count', 0)}
-🐋 Buy/Sell Ratio: {token_data.get('buy_sell_ratio', 0):.2f}
-📈 MC: ${token_data.get('market_cap_usd', 0):,.2f}
-⏰ Age: {token_data.get('age_minutes', 0)} minutes
+📈 Volume: +{token_data.get('volume_change_percent', 0)}% (5min)
+💰 Current: {token_data.get('volume_sol_5m', 0):.2f} SOL
+📊 Buys: {token_data.get('buy_count_5m', 0)} | Sells: {token_data.get('sell_count_5m', 0)}
+🐋 Ratio: {token_data.get('buy_sell_ratio', 0):.2f}
+📈 MC: ${token_data.get('market_cap', 0):,.2f}
 
-Bonding curve: {token_data.get('bonding_curve_percent', 0):.1f}%
-
-Might pump soon! ⏰
+Something's brewing! ⏰
 
 DYOR! NFA! 🧬
 """
@@ -118,20 +117,17 @@ DYOR! NFA! 🧬
 
 async def send_fast_mover_alert(token_data: dict):
     message = f"""
-🚀 <b>FAST MOVER DETECTED</b> 🚀
-
-Token pumping hard!
+🚀 <b>FAST MOVER</b> 🚀
 
 🪙 <b>${token_data.get('symbol', 'UNKNOWN')}</b>
 📈 +{token_data.get('price_change_percent', 0)}% in 5 minutes
-💰 MC: ${token_data.get('market_cap_usd_old', 0):,.2f} → ${token_data.get('market_cap_usd', 0):,.2f}
-🔥 Volume: ${token_data.get('volume_usd', 0):,.2f} (5min)
-📊 Holders: {token_data.get('holder_count', 0):,} (+{token_data.get('holder_change', 0)})
-⏰ Age: {token_data.get('age_minutes', 0)} minutes
+💰 MC: ${token_data.get('market_cap_old', 0):,.2f} → ${token_data.get('market_cap', 0):,.2f}
+🔥 Volume 5m: ${token_data.get('volume_usd_5m', 0):,.2f}
+📊 Holders: {token_data.get('holder_count', 0):,} (+{token_data.get('holder_delta', 0)})
 
-🔗 <a href="https://pump.fun/{token_data.get('mint', '')}">View on pump.fun</a>
+🔗 <a href="https://pump.fun/{token_data.get('mint', '')}">Trade Now</a>
 
-Catch the momentum! 👀
+Momentum alert! Catch the move 👀
 
 DYOR! 🧬
 """
@@ -139,24 +135,19 @@ DYOR! 🧬
 
 async def send_graduation_alert(token_data: dict):
     message = f"""
-🎓 <b>GRADUATION ALERT</b> 🎓
-
-Token graduating from pump.fun!
+🎓 <b>GRADUATION IMMINENT</b> 🎓
 
 🪙 <b>${token_data.get('symbol', 'UNKNOWN')}</b>
-📈 MC: ${token_data.get('market_cap_usd', 0):,.2f}
-💧 LP migrating to Raydium
-⏰ Graduation in: ~{token_data.get('time_to_graduation', 5)} minutes
-📊 Bonding curve: {token_data.get('bonding_curve_percent', 0):.1f}%
+📈 MC: ${token_data.get('market_cap', 0):,.2f}
+💧 Bonding: {token_data.get('bonding_curve_percent', 0):.1f}%
+⏰ ETA: ~5 minutes
 
 🔥 Holders: {token_data.get('holder_count', 0):,}
-💰 Volume: {token_data.get('volume_sol', 0):.2f} SOL
+💰 Volume: {token_data.get('volume_sol_5m', 0):.2f} SOL
 
-Historical grad performance:
-• Average 1h post-grad: +40%
-• Success rate: ~65%
+Historical post-grad avg: +40%
 
-Watch for entry opportunity! 👀
+Watch for LP migration! 👀
 
 "Evolve or Die" 🧬
 """
@@ -164,130 +155,177 @@ Watch for entry opportunity! 👀
 
 async def send_hourly_recap(top_tokens: list):
     message = f"""
-🧬 <b>HOURLY TRENDING RECAP</b> 🧬
+🧬 <b>HOURLY RECAP</b> 🧬
 🕐 {datetime.now().strftime('%H:%00 GMT+7')}
 
-Top {len(top_tokens)} trending tokens (last hour):
+Top {len(top_tokens)} trending tokens:
 
 """
     for i, token in enumerate(top_tokens[:5], 1):
         message += f"""
 {i}. <b>${token.get('symbol', 'UNKNOWN')}</b>
-   📈 MC: ${token.get('market_cap_usd', 0):,.0f}
-   💰 Vol: {token.get('volume_sol', 0):.1f} SOL
-   🔥 Holders: {token.get('holder_count', 0):,}
+   MC: ${token.get('market_cap', 0):,.0f}
+   Vol: {token.get('volume_sol_5m', 0):.1f} SOL
+   Holders: {token.get('holder_count', 0):,}
 """
     message += """
 
-<i>Stay ahead of the curve!</i> 👀
+<i>Stay sharp!</i> 👀
 
-DYOR always! 🧬
 - EVO Agents
 """
     await send_telegram_message(message)
 
-async def fetch_trending_tokens():
+async def fetch_token_details(mint: str) -> dict:
+    """Fetch detailed token info via REST API"""
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"{PUMP_FUN_API}/coins/trending") as response:
+            async with session.get(f"{PUMP_FUN_REST}/coins/{mint}") as response:
                 if response.status == 200:
-                    data = await response.json()
-                    return data.get('coins', [])
-                else:
-                    logger.warning(f"Failed to fetch trending: {response.status}")
-                    return []
+                    return await response.json()
     except Exception as e:
-        logger.error(f"Error fetching trending tokens: {e}")
-        return []
+        logger.error(f"Error fetching token {mint}: {e}")
+    return {}
 
-async def analyze_token(token_data: dict) -> dict:
+async def analyze_token(data: dict) -> dict:
+    """Analyze token from WebSocket event"""
     analysis = {
         'should_alert': False,
         'alert_type': None,
         'reason': []
     }
-    volume_sol = token_data.get('volume_sol', 0)
+    
+    mint = data.get('mint', '')
+    volume_sol = data.get('volume_sol_5m', 0)
+    holders = data.get('holder_count', 0)
+    age_minutes = data.get('age_minutes', 999)
+    liquidity = data.get('liquidity_usd', 0)
+    bonding_curve = data.get('bonding_curve_percent', 0)
+    volume_change = data.get('volume_change_percent', 0)
+    price_change = data.get('price_change_percent', 0)
+    
+    # Basic checks
     if volume_sol >= MIN_VOLUME_SOL:
         analysis['should_alert'] = True
         analysis['alert_type'] = 'trending'
-        analysis['reason'].append(f'High volume: {volume_sol:.2f} SOL')
-    holders = token_data.get('holder_count', 0)
+        analysis['reason'].append(f'Volume: {volume_sol:.2f} SOL')
+    
     if holders >= MIN_HOLDERS:
         analysis['should_alert'] = True
         if not analysis['alert_type']:
             analysis['alert_type'] = 'trending'
-        analysis['reason'].append(f'Good holders: {holders}')
-    age_minutes = token_data.get('age_minutes', 999)
+        analysis['reason'].append(f' holders: {holders}')
+    
     if age_minutes > MAX_AGE_MINUTES:
         analysis['should_alert'] = False
-    liquidity = token_data.get('liquidity_usd', 0)
+    
     if liquidity < MIN_LIQUIDITY_USD:
         analysis['should_alert'] = False
-    bonding_curve = token_data.get('bonding_curve_percent', 0)
+    
+    # Graduation check
     if bonding_curve >= 90:
         analysis['alert_type'] = 'graduation'
-        analysis['reason'].append(f'Graduation imminent: {bonding_curve:.1f}%')
-    volume_change = token_data.get('volume_change_percent', 0)
+        analysis['reason'].append(f'Grad: {bonding_curve:.1f}%')
+    
+    # Volume spike
     if volume_change >= VOLUME_SPIKE_PERCENT:
         analysis['alert_type'] = 'volume_spike'
-        analysis['reason'].append(f'Volume spike: +{volume_change}%')
-    price_change = token_data.get('price_change_percent', 0)
+        analysis['reason'].append(f'Vol +{volume_change}%')
+    
+    # Fast mover
     if price_change >= 100:
         analysis['alert_type'] = 'fast_mover'
-        analysis['reason'].append(f'Fast mover: +{price_change}%')
+        analysis['reason'].append(f'Price +{price_change}%')
+    
+    analysis['data'] = data
     return analysis
 
 async def monitor_loop():
-    logger.info("Starting EVO Pump.fun Monitor Bot...")
-    logger.info(f"Telegram Channel: {TELEGRAM_CHANNEL_ID}")
-    logger.info(f"Check interval: {CHECK_INTERVAL_SECONDS}s")
+    """Main WebSocket loop"""
+    logger.info("Connecting to pump.fun WebSocket...")
+    
+    # Send startup message
     await send_telegram_message("""
-🧬 <b>EVO ALERT BOT STARTED</b> 🧬
+🧬 <b>EVO ALERT BOT CONNECTED</b> 🧬
 
-Bot is now monitoring pump.fun for:
-✅ Trending tokens
-✅ Volume spikes
-✅ Fast movers
-✅ Graduation alerts
+Listening to pump.fun real-time stream...
+Monitoring: new tokens, volume spikes, graduations
 
 Thresholds:
 • Min Volume: 10 SOL
 • Min Holders: 50
 • Max Age: 30 min
-• Max Alerts/Hour: 10
 
 Standby for alpha! 👀
 
 "Evolve or Die" 🧬
 - EVO Agents
 """)
-    last_recap_time = datetime.now()
+    
+    last_recap = datetime.now()
+    recent_alerts = []  # For hourly recap
+    
     while True:
         try:
-            trending_tokens = await fetch_trending_tokens()
-            logger.info(f"Fetched {len(trending_tokens)} trending tokens")
-            for token in trending_tokens[:20]:
-                if not alert_tracker.can_alert(token.get('mint', '')):
-                    continue
-                analysis = await analyze_token(token)
-                if analysis['should_alert']:
-                    if analysis['alert_type'] == 'trending':
-                        await send_trending_alert(token)
-                    elif analysis['alert_type'] == 'volume_spike':
-                        await send_volume_spike_alert(token)
-                    elif analysis['alert_type'] == 'fast_mover':
-                        await send_fast_mover_alert(token)
-                    elif analysis['alert_type'] == 'graduation':
-                        await send_graduation_alert(token)
-                    alert_tracker.record_alert(token.get('mint', ''))
-                    logger.info(f"Alert sent for {token.get('symbol')}: {analysis['alert_type']}")
-            if datetime.now() - last_recap_time >= timedelta(hours=1):
-                await send_hourly_recap(trending_tokens)
-                last_recap_time = datetime.now()
-            await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+            async with websockets.connect(PUMP_FUN_WS, ping_interval=20, ping_timeout=10) as websocket:
+                logger.info("WebSocket connected")
+                
+                while True:
+                    try:
+                        message = await websocket.recv()
+                        data = json.loads(message)
+                        
+                        # Process based on message type
+                        event_type = data.get('event')
+                        
+                        if event_type == 'new_token':
+                            # New token launched
+                            analysis = await analyze_token(data)
+                            if analysis['should_alert']:
+                                await send_trending_alert(data)
+                                alert_tracker.record_alert(data.get('mint', ''))
+                                recent_alerts.append(data)
+                        
+                        elif event_type == 'token_update':
+                            # Existing token updated (price/volume change)
+                            mint = data.get('mint')
+                            # Fetch full details for analysis
+                            details = await fetch_token_details(mint)
+                            if details:
+                                details.update(data)  # Merge with update data
+                                analysis = await analyze_token(details)
+                                if analysis['should_alert'] and analysis['alert_type'] == 'fast_mover':
+                                    await send_fast_mover_alert(details)
+                                    alert_tracker.record_alert(mint)
+                                    recent_alerts.append(details)
+                        
+                        elif event_type == 'graduation':
+                            # Token graduating
+                            await send_graduation_alert(data)
+                            alert_tracker.record_alert(data.get('mint', ''))
+                        
+                        # Hourly recap
+                        if datetime.now() - last_recap >= timedelta(hours=1):
+                            # Sort recent alerts by trend score (volume * change)
+                            top_tokens = sorted(
+                                recent_alerts,
+                                key=lambda x: x.get('volume_sol_5m', 0) * max(1, x.get('price_change_percent', 0)/100),
+                                reverse=True
+                            )[:10]
+                            await send_hourly_recap(top_tokens)
+                            recent_alerts.clear()
+                            last_recap = datetime.now()
+                            
+                    except websockets.ConnectionClosed:
+                        logger.warning("WebSocket closed, reconnecting...")
+                        break
+                    except Exception as e:
+                        logger.error(f"Error processing message: {e}")
+                        continue
+                        
         except Exception as e:
-            logger.error(f"Error in monitor loop: {e}")
-            await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+            logger.error(f"WebSocket error: {e}")
+            await asyncio.sleep(5)  # Reconnect delay
 
 if __name__ == "__main__":
     try:
