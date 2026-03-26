@@ -252,9 +252,9 @@ Listening to pump.fun real-time stream...
 Monitoring: new tokens, volume spikes, graduations
 
 Thresholds:
-• Min Volume: 10 SOL
-• Min Holders: 50
-• Max Age: 30 min
+• Min Volume: 1 SOL
+• Min Holders: 1
+• Max Age: 5 min
 
 Standby for alpha! 👀
 
